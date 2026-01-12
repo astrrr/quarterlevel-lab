@@ -1,121 +1,131 @@
 # QuarterLevel Lab (`quarterlevel-lab`)
 
-Event-based trading research pipeline on retail OHLCV data using:
+Event-based trading research pipeline for **fixed price levels (0.25)** with
+**deterministic TP/SL ladder labeling** on OHLCV data.
 
-- Fixed price levels: **0.25** (`.00 .25 .50 .75`)
-- TP/SL ladder step: **0.125**
-- Deterministic labeling (no subjective pattern names)
-- Partitioned Parquet datasets (`symbol/timeframe/date`) for append/backfill/research
-
----
-
-## Why
-
-ผมไม่ได้ทำเพื่อทาย Buy/Sell ให้แม่นขึ้น
-แต่ทำเพื่อ “คัดไม้พัง” ลด DD และอยู่รอดใน prop firm
-
-Key idea:
-- Event = ราคา **interaction กับ fixed level**
-- วัด outcome แบบ **TP/SL ladder**
-- เก็บ MAE/MFE + เวลา + path information (`bars_to_*`) เพื่อใช้ทำ risk model / filter
+> Focus: ลด drawdown, คัด trade ที่ “ไม่ควรเข้า”, และสร้าง rule ที่ใช้เทรดจริงได้  
+> ไม่ใช่ระบบทำนาย Buy/Sell แบบ black-box
 
 ---
 
-## Datasets
+## Core Idea
 
-### 1) `data/raw_bars`
-OHLCV ดิบ (immutable)
+- ใช้ **fixed price scale** (0.25 → `.00 .25 .50 .75`)
+- มองตลาดเป็น **event-based** ไม่ใช่ bar-by-bar
+- Event = ราคา *interaction* กับ price level
+- วัดผลลัพธ์ด้วย **TP/SL ladder (0.125 ต่อ step)**
+- ทุกอย่าง deterministic, reproducible, ไม่ subjective
 
-Partition:
-- `symbol=.../timeframe=.../date=YYYY-MM-DD/part-000.parquet`
-
-Columns (ขั้นต่ำ):
-- timestamp (Datetime)
-- open, high, low, close (Float64)
-- volume (Int64)
-- symbol (Utf8)
-- timeframe (Utf8)
-- date (Date)
+ระบบนี้ถูกออกแบบมาเพื่อ:
+- วิเคราะห์ behavior รอบ level
+- แยก CONTINUATION / FALSE_BREAK / STALL / NOISE
+- ใช้เป็นฐานสำหรับ risk filter, position sizing, และ rule-based execution
 
 ---
 
-### 2) `data/level_events_labeled`
-Event ที่ราคา hit level 0.25 แล้ว track ต่อไปข้างหน้า
+## What This Repo Does (Current State)
 
-สำคัญสุด: เก็บ `bars_to_*` “ครบทุกระดับ” เป็น list columns
-
-Key columns:
-- event_id
-- t0, t_last
-- level (Float64)
-- p0 (= level)
-- side: UP/DOWN (กำหนดจากฝั่งที่ MFE ใหญ่กว่า)
-- mfe, mae
-- tp_level, sl_level
-- tp_hit_bars: **List[Int64?]**  (TP1..TPk_max)
-- sl_hit_bars: **List[Int64?]**  (SL1..SLk_max, วัดฝั่ง adverse ต่อ side)
-- bars_to_tp1, bars_to_tp2, bars_to_sl1 (convenience)
-- time_in_event
-- outcome: CONTINUATION / FALSE_BREAK / STALL / NOISE
-
-#### Meaning of `tp_hit_bars` / `sl_hit_bars`
-- index 0 = level 1 (0.125)
-- index 1 = level 2 (0.250)
-- ...
-- value = จำนวน bars หลัง t0 ที่ “แตะครั้งแรก”
-- null = ไม่เคยแตะภายใน horizon
+✅ Ingest CSV OHLCV (รองรับหลาย format)  
+✅ รองรับ CSV แบบ `date,time,open,high,low,close,volume`  
+✅ Windows-safe Parquet writer  
+✅ Detect price-level events (0.25)  
+✅ Label outcome ด้วย TP/SL ladder (0.125)  
+✅ เก็บ **bars_to_TP / bars_to_SL ทุกระดับ** (list columns)  
+✅ ใช้งานกับ data ขนาดหลายปีได้จริง
 
 ---
 
-### 3) `data/event_features` (optional)
-Feature deterministic รอบ event (baseline)
-- dist_close_to_level
-- wick_body_ratio
-- abs_return_sum_lb
-- hl_range_avg_lb
+## Project Structure (Minimal)
+
+```
+
+quarterlevel-lab/
+├─ pipeline.py
+├─ README.md
+├─ requirements.txt
+├─ .gitignore
+└─ data/                  # not committed
+    ├─ raw_bars/
+    ├─ level_events_labeled/
+    └─ event_features/
+
+````
 
 ---
 
-## How it works (high-level)
-
-1. Ingest raw OHLCV -> partitioned Parquet
-2. Detect bars that cross any 0.25 level -> hits
-3. Merge hits close in time into events
-4. For each event:
-   - track forward up to `max_bars_forward`
-   - compute MFE/MAE
-   - compute `tp_hit_bars` (ALL levels up to k_max)
-   - compute `sl_hit_bars` (ALL levels up to k_max, adverse side)
-   - derive `tp_level/sl_level` and `outcome`
-
----
-
-## Install
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ````
 
-`requirements.txt`:
+Dependencies (หลัก):
 
 * polars
 * pyarrow
 
 ---
 
+## Input CSV Formats
+
+### 1) CSV with header + timestamp
+
+```csv
+timestamp,open,high,low,close,volume
+2020-01-02 01:00:00,61.391,61.466,61.346,61.406,125
+```
+
+### 2) CSV with header + date,time
+
+```csv
+date,time,open,high,low,close,volume
+2020.01.02,01:00:00,61.391,61.466,61.346,61.406,125
+```
+
+### 3) CSV without header (date,time,...)
+
+```csv
+2020.01.02,01:00:00,61.391,61.466,61.346,61.406,125
+```
+
+ใช้ flag `--no-header`
+
+---
+
 ## Usage
 
-### 1) Ingest raw
+### 1) Ingest raw data
+
+#### Case A: มี header
 
 ```bash
 python pipeline.py ingest-raw \
-  --csv mcl_m5.csv \
+  --csv path/to/MCL_M5.csv \
   --symbol MCL \
   --timeframe M5 \
   --out-dir data
 ```
 
-### 2) Build labeled events (ALL bars_to levels)
+#### Case B: ไม่มี header (date,time,...)
+
+```bash
+python pipeline.py ingest-raw \
+  --csv "data/US_Light_Crude_Oil_GMT+2_US-DST_M5.csv" \
+  --no-header \
+  --symbol MCL \
+  --timeframe M5 \
+  --out-dir data
+```
+
+ผลลัพธ์:
+
+```
+data/raw_bars/symbol=MCL/timeframe=M5/date=YYYY-MM-DD/part-000.parquet
+```
+
+---
+
+### 2) Build labeled events
 
 ```bash
 python pipeline.py build-events \
@@ -130,7 +140,15 @@ python pipeline.py build-events \
   --k-max 32
 ```
 
-### 3) Build features (optional)
+ผลลัพธ์:
+
+```
+data/level_events_labeled/...
+```
+
+---
+
+### 3) (Optional) Build features
 
 ```bash
 python pipeline.py build-features \
@@ -142,13 +160,83 @@ python pipeline.py build-features \
 
 ---
 
-## Notes / Defaults (M5)
+## Dataset Overview
 
-* `max-bars-forward=80` ≈ 6h40m
-* `k-max=32` => 0.125 * 32 = 4.0 dollars ladder coverage
+### `raw_bars`
 
-ถ้าอยากละเอียดกว่า:
+OHLCV ดิบ (immutable)
 
-* เพิ่ม `k-max` (เช่น 64) แต่ list column จะยาวขึ้นตามนั้น
+Columns:
+
+* timestamp (Datetime)
+* open, high, low, close (Float64)
+* volume (Int64)
+* date (Date)
+* symbol, timeframe
 
 ---
+
+### `level_events_labeled`
+
+หัวใจของโปรเจค
+
+Key columns:
+
+* event_id
+* t0, t_last
+* level / p0
+* side (UP / DOWN)
+* mfe / mae
+* tp_level / sl_level
+* **tp_hit_bars**: List[Int] → TP1..TPk
+* **sl_hit_bars**: List[Int] → SL1..SLk (adverse)
+* bars_to_tp1 / bars_to_tp2 / bars_to_sl1
+* time_in_event
+* outcome:
+
+  * CONTINUATION
+  * FALSE_BREAK
+  * STALL
+  * NOISE
+
+**ความหมายของ tp_hit_bars**
+
+* index 0 = TP1 (0.125)
+* index 1 = TP2 (0.25)
+* value = จำนวน bars หลัง t0 ที่แตะครั้งแรก
+* null = ไม่เคยแตะภายใน horizon
+
+---
+
+## Default Parameters (M5)
+
+* level_step = 0.25
+* tp_step / sl_step = 0.125
+* max_bars_forward = 80  (~6h40m)
+* k_max = 32  (coverage ~4.0 dollars)
+
+---
+
+## Philosophy
+
+* ไม่ optimize เพื่อ win rate
+* ไม่ fit model ให้สวย
+* เน้น **อยู่รอด + ลด DD**
+* ทุก rule ต้องอธิบายได้ และเอาไปใช้เทรดจริงได้
+
+---
+
+## Status
+
+* v0.1.x: data pipeline + labeling stable
+* Next:
+
+  * outcome analysis
+  * risk filter rules
+  * walk-forward / stress test
+  * integration กับ execution layer
+
+---
+
+
+
