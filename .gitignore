@@ -1,0 +1,57 @@
+# ======================
+# Python
+# ======================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.env
+.venv
+venv/
+ENV/
+
+# ======================
+# OS / Editor
+# ======================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ======================
+# Data / Artifacts
+# ======================
+data/
+*.parquet
+*.csv
+*.feather
+
+# ======================
+# Logs / Outputs
+# ======================
+logs/
+outputs/
+reports/
+figures/
+
+# ======================
+# Notebooks (optional)
+# ======================
+.ipynb_checkpoints/
+
+# ======================
+# Experiments / Cache
+# ======================
+.cache/
+.tmp/
+tmp/
+
+# ======================
+# Model artifacts (future)
+# ======================
+models/
+checkpoints/
